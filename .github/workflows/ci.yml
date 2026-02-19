@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════════════
+# SynthetiQ CI/CD Pipeline
+# ═══════════════════════════════════════════════════════════════════
+# Runs on every push and PR. Public repos get unlimited free minutes.
+#
+# Pipeline stages:
+#   1. Build + unit tests (fast feedback, ~2 min)
+#   2. Integration tests with Testcontainers (real Postgres + LocalStack)
+#   3. Build Docker image (only on main branch)
+#
+# Decision: Single workflow over separate workflows per stage.
+# Simpler to reason about, and the stages are sequential anyway.
+# ═══════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true  # Cancel stale runs on force-push
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build and Unit Tests
+        run: ./mvnw verify -DskipITs -B -q
+        # -DskipITs: Skip integration tests (run separately)
+        # -B: Batch mode (no progress bar)
+        # -q: Quiet (less log noise)
+
+      - name: Integration Tests (Testcontainers)
+        run: ./mvnw failsafe:integration-test failsafe:verify -B
+
+      - name: Upload Test Results
+        if: always()  # Upload even on failure
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/
+
+  docker:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build JAR
+        run: ./mvnw package -DskipTests -B -q
+
+      - name: Build Docker Image
+        run: |
+          docker build -t synthetiq:${{ github.sha }} .
+          docker tag synthetiq:${{ github.sha }} synthetiq:latest
+
+      # TODO: Push to ECR when deploying to AWS
+      # - name: Push to ECR
+      #   run: |
+      #     aws ecr get-login-password | docker login --username AWS --password-stdin $ECR_URI
+      #     docker push $ECR_URI/synthetiq:${{ github.sha }}

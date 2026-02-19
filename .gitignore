@@ -1,0 +1,32 @@
+# Build
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# IDE
+.idea/
+*.iml
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spring Boot
+*.log
+application-local-override.yml
+
+# Environment
+.env
+*.pem
+*.key
+
+# Docker
+docker-compose.override.yml

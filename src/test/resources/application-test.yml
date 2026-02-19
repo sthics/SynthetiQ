@@ -1,0 +1,20 @@
+# Test profile — Testcontainers provides DB and AWS
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # Fresh schema per test run
+  flyway:
+    enabled: false  # Let Hibernate create schema in tests
+  ai:
+    bedrock:
+      enabled: false
+    ollama:
+      enabled: false
+
+synthetiq:
+  github:
+    app-id: 12345
+    webhook-secret: test-secret
+  ai:
+    default-tier: LOCAL
+    max-tier: LOCAL

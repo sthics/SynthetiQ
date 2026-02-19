@@ -1,0 +1,50 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Local Development Profile
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# No AWS, no PostgreSQL, no external dependencies.
+# Just Ollama running locally and H2 in-memory.
+# Startup in <3 seconds for a tight dev loop.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+spring:
+  autoconfigure:
+    exclude:
+      - io.awspring.cloud.autoconfigure.sqs.SqsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.sns.SnsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.s3.S3AutoConfiguration
+      - io.awspring.cloud.autoconfigure.parameterstore.ParameterStoreAutoConfiguration
+      - org.springframework.ai.model.bedrock.cohere.autoconfigure.BedrockCohereEmbeddingAutoConfiguration
+      - org.springframework.ai.model.bedrock.converse.autoconfigure.BedrockConverseProxyChatAutoConfiguration
+      - org.springframework.ai.model.bedrock.titan.autoconfigure.BedrockTitanEmbeddingAutoConfiguration
+  datasource:
+    url: jdbc:h2:mem:synthetiq;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # OK for local — Flyway owns prod schema
+    database-platform: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false  # Use JPA auto-DDL locally for speed
+  # ── Disable AWS auto-config for local dev ──────────────
+  cloud:
+    aws:
+      region:
+        static: us-east-1
+      credentials:
+        access-key: test
+        secret-key: test
+
+server:
+  port: 8090
+
+# Disable AWS integrations — use in-memory event bus instead
+synthetiq:
+  events:
+    transport: in-memory  # swap to "sqs" in dev/prod profiles
+  github:
+    app-id: 0  # dummy value for local dev (type: long)
+    webhook-secret: dev-secret-not-for-production
+

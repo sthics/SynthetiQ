@@ -1,0 +1,126 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SynthetiQ Configuration
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Profile strategy:
+#   - "local"  : Ollama-only, H2, no AWS (fast dev loop)
+#   - "dev"    : Ollama + LocalStack, PostgreSQL (integration testing)
+#   - "prod"   : Ollama + Bedrock, RDS, real SQS/SNS (deployed)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+spring:
+  application:
+    name: synthetiq
+  profiles:
+    active: local
+
+  # ── JPA ──────────────────────────────────────────────────
+  jpa:
+    open-in-view: false  # TRADEOFF: disabled to prevent lazy-loading surprises in controllers
+    hibernate:
+      ddl-auto: validate  # Flyway owns schema; Hibernate only validates
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 25  # batch inserts for review findings
+        order_inserts: true
+        order_updates: true
+
+  # ── Flyway ───────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # ── Jackson ──────────────────────────────────────────────
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false  # GitHub sends extra fields we don't model
+
+  # ── Async ────────────────────────────────────────────────
+  # TRADEOFF: Virtual threads (Java 21) over traditional thread pools.
+  # Pros: near-unlimited concurrency for I/O-bound agent calls, no pool sizing headaches.
+  # Cons: not ideal for CPU-bound work, but our CPU work (prompt building) is trivial.
+  threads:
+    virtual:
+      enabled: true
+
+# ── Spring AI ──────────────────────────────────────────────
+spring.ai:
+  ollama:
+    base-url: http://localhost:11434
+    chat:
+      options:
+        model: deepseek-r1:1.5b
+        temperature: 0.1         # low temp for deterministic code analysis
+        num-predict: 2048
+  # Bedrock config injected via profile-specific properties
+
+# ── SynthetiQ Custom Properties ────────────────────────────
+synthetiq:
+  github:
+    app-id: ${GITHUB_APP_ID:}
+    webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+    private-key-path: ${GITHUB_PRIVATE_KEY_PATH:}
+
+  agents:
+    # Budget guardrails: max Bedrock tokens per day (prevents cost blowouts)
+    daily-bedrock-token-limit: 50000
+    # Complexity threshold: tasks scoring below this use Ollama, above use Bedrock
+    complexity-routing-threshold: 0.6
+    # Maximum concurrent agent executions per review
+    max-parallel-agents: 5
+
+  review:
+    # How long to wait for all agents before posting partial results
+    agent-timeout-seconds: 120
+    # Maximum file size (bytes) to analyze — skip generated/vendor files
+    max-file-size-bytes: 102400  # 100KB
+
+# ── Resilience4j ───────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      ollama:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+      bedrock:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+      github:
+        sliding-window-size: 20
+        failure-rate-threshold: 30
+        wait-duration-in-open-state: 120s  # GitHub rate limits are aggressive
+  ratelimiter:
+    instances:
+      bedrock-daily:
+        limit-for-period: 100          # max 100 Bedrock calls per refresh period
+        limit-refresh-period: 1d
+        timeout-duration: 0s           # fail immediately if limit reached
+      github-api:
+        limit-for-period: 5000        # GitHub App: 5000 req/hr
+        limit-refresh-period: 1h
+
+# ── Actuator ───────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: synthetiq
+
+# ── Logging ────────────────────────────────────────────────
+logging:
+  pattern:
+    console: "%d{ISO8601} [%thread] [%X{correlationId}] %-5level %logger{36} - %msg%n"
+  level:
+    dev.synthetiq: DEBUG
+    org.springframework.ai: INFO
+    io.awspring.cloud: INFO

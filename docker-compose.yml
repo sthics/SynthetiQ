@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════════════════
+# SynthetiQ Local Development Stack
+# ═══════════════════════════════════════════════════════════════════
+# Usage: docker compose up -d
+#
+# Services:
+#   postgres   — Primary database (matches RDS in production)
+#   localstack — SQS, SNS, S3 (matches real AWS services)
+#   ollama     — Local AI model server (free tier equivalent)
+#
+# Tradeoff: Docker Compose over dev-services (Spring Boot 3.1+).
+# We use Compose because:
+#   1. LocalStack needs init scripts for queue/topic creation
+#   2. Ollama needs model pre-pull on first run
+#   3. Explicit control over networking and volumes
+#   4. Works identically on CI (GitHub Actions)
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: synthetiq-db
+    environment:
+      POSTGRES_DB: synthetiq
+      POSTGRES_USER: synthetiq
+      POSTGRES_PASSWORD: localdev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synthetiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: synthetiq-aws
+    environment:
+      SERVICES: sqs,sns,s3
+      DEFAULT_REGION: us-east-1
+      # Pre-create resources on startup
+      EAGER_SERVICE_LOADING: 1
+    ports:
+      - "4566:4566"
+    volumes:
+      - "./docker/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: synthetiq-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # Pull the model on first run. Subsequent starts use cached model.
+    # deepseek-r1:1.5b is small enough for t2.micro (1GB RAM)
+    entrypoint: >
+      sh -c "ollama serve &
+             sleep 5 &&
+             ollama pull deepseek-r1:1.5b &&
+             wait"
+    deploy:
+      resources:
+        limits:
+          memory: 2G  # 1.5B model needs ~1.5GB
+
+volumes:
+  pgdata:
+  localstack-data:
+  ollama-models:

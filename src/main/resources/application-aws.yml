@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:5432/synthetiq
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  ai:
+    bedrock:
+      aws:
+        region: us-east-1
+      chat:
+        enabled: true
+    ollama:
+      enabled: false
+  config:
+    import: "aws-parameterstore:/synthetiq/"
+spring.cloud.aws:
+  region:
+    static: us-east-1
+  parameterstore:
+    enabled: true
+synthetiq:
+  ai:
+    default-tier: CHEAP
+    max-tier: SMART
+logging:
+  level:
+    dev.synthetiq: INFO
+    root: WARN
