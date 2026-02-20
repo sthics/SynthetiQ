@@ -2,6 +2,7 @@ package dev.synthetiq.agent.architecture;
 
 import dev.synthetiq.agent.AgentAnalysisResult;
 import dev.synthetiq.agent.CodeReviewAgent;
+import dev.synthetiq.config.AgentProperties;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.AiTier;
 import dev.synthetiq.domain.valueobject.CodeFile;
@@ -11,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -22,10 +24,16 @@ import java.util.stream.Collectors;
 @Component
 public class ArchitectureAgent implements CodeReviewAgent {
     private static final Logger log = LoggerFactory.getLogger(ArchitectureAgent.class);
-    private final AiModelRouter modelRouter;
+    private static final int DEFAULT_MAX_CONTEXT_FILES = 15;
 
-    public ArchitectureAgent(AiModelRouter modelRouter) {
+    private final AiModelRouter modelRouter;
+    private final int maxContextFiles;
+
+    public ArchitectureAgent(AiModelRouter modelRouter, AgentProperties agentProperties) {
         this.modelRouter = modelRouter;
+        this.maxContextFiles = agentProperties.architecture() != null
+                ? agentProperties.architecture().maxContextFiles()
+                : DEFAULT_MAX_CONTEXT_FILES;
     }
 
     @Override
@@ -43,15 +51,66 @@ public class ArchitectureAgent implements CodeReviewAgent {
         return files.stream().anyMatch(f -> f.isJavaSource() || f.isConfigFile() || "gradle".equals(f.language()));
     }
 
+    /**
+     * Ranks files by architecture relevance. Priorities:
+     * - Build configs (pom.xml, build.gradle) → migration epicenter
+     * - Security configs → high migration impact
+     * - Config/configuration classes → framework wiring
+     * - javax.* signals in patch → direct migration evidence
+     * - Controllers → API layer patterns
+     * - Config files (.yml, .properties) → property renames
+     */
+    @Override
+    public List<CodeFile> rankFiles(List<CodeFile> files, int maxFiles) {
+        return files.stream()
+                .filter(f -> f.isJavaSource() || f.isConfigFile() || "gradle".equals(f.language()))
+                .sorted(Comparator.comparingInt(this::scoreForArchitecture).reversed())
+                .limit(maxFiles)
+                .toList();
+    }
+
+    private int scoreForArchitecture(CodeFile file) {
+        int score = 0;
+        String pathLower = file.path().toLowerCase();
+        String patch = file.patch() != null ? file.patch() : "";
+
+        // Build config = migration epicenter
+        if (pathLower.contains("pom.xml") || pathLower.contains("build.gradle"))
+            score += 100;
+        // Security config = high migration impact
+        if (pathLower.contains("securityconfig") || pathLower.contains("websecurityconfigureradapter"))
+            score += 90;
+        // Config/Configuration classes = framework wiring
+        if (pathLower.contains("config") && !pathLower.contains("securityconfig"))
+            score += 80;
+        // Application main class = bootstrap config
+        if (pathLower.contains("application.java") || pathLower.endsWith("app.java"))
+            score += 70;
+        // javax.* in patch = direct migration signal
+        if (patch.contains("javax."))
+            score += 60;
+        // Controllers = API layer
+        if (pathLower.contains("controller") || pathLower.contains("restcontroller"))
+            score += 50;
+        // YAML/properties = property renames
+        if (pathLower.endsWith(".yml") || pathLower.endsWith(".yaml") || pathLower.endsWith(".properties"))
+            score += 40;
+        // Larger diffs = more to review
+        score += (file.additions() + file.deletions()) / 10;
+
+        return score;
+    }
+
     @Override
     public AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName) {
         log.info("ArchitectureAgent analyzing {} files for {}", files.size(), repoFullName);
-        List<CodeFile> relevant = files.stream()
-                .filter(f -> f.isJavaSource() || f.isConfigFile() || "gradle".equals(f.language())).toList();
-        if (relevant.isEmpty())
+        List<CodeFile> ranked = rankFiles(files, maxContextFiles);
+        if (ranked.isEmpty())
             return AgentAnalysisResult.empty();
 
-        String prompt = buildPrompt(relevant, repoFullName);
+        log.info("ArchitectureAgent selected top {} of {} files for context", ranked.size(), files.size());
+
+        String prompt = buildPrompt(ranked, repoFullName);
         Instant start = Instant.now();
         AiModelRouter.AiResponse response = modelRouter.route(prompt, AiTier.SMART);
 

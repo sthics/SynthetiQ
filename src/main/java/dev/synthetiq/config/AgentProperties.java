@@ -5,8 +5,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "synthetiq.agents")
 public record AgentProperties(AgentConfig security, AgentConfig performance,
-                                AgentConfig architecture, AgentConfig refactoring) {
-    public record AgentConfig(boolean enabled, AiTier maxTier) {
-        public AgentConfig { if (maxTier == null) maxTier = AiTier.LOCAL; }
+        AgentConfig architecture, AgentConfig refactoring) {
+    public record AgentConfig(boolean enabled, AiTier maxTier, int maxContextFiles) {
+        public AgentConfig {
+            if (maxTier == null)
+                maxTier = AiTier.LOCAL;
+            if (maxContextFiles <= 0)
+                maxContextFiles = 15;
+        }
     }
 }

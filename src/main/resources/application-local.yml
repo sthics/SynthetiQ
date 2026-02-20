@@ -47,4 +47,5 @@ synthetiq:
   github:
     app-id: 0  # dummy value for local dev (type: long)
     webhook-secret: dev-secret-not-for-production
+    webhook-proxy-url: https://smee.io/xRp6sLbig6gJsohS
 

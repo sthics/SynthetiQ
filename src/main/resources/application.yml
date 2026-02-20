@@ -69,6 +69,19 @@ synthetiq:
     complexity-routing-threshold: 0.6
     # Maximum concurrent agent executions per review
     max-parallel-agents: 5
+    # Per-agent configuration
+    security:
+      enabled: true
+      max-context-files: 15
+    architecture:
+      enabled: true
+      max-context-files: 15
+    performance:
+      enabled: true
+      max-context-files: 15
+    refactoring:
+      enabled: true
+      max-context-files: 15
 
   review:
     # How long to wait for all agents before posting partial results

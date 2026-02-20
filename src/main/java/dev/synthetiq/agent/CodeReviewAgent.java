@@ -3,6 +3,7 @@ package dev.synthetiq.agent;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.AiTier;
 import dev.synthetiq.domain.valueobject.CodeFile;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -12,7 +13,27 @@ import java.util.List;
  */
 public interface CodeReviewAgent {
     AgentType getType();
+
     AiTier getMinimumTier();
+
     boolean supports(List<CodeFile> files);
+
     AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName);
+
+    /**
+     * Ranks files by domain-specific relevance and caps at maxFiles.
+     * Default: sort by estimated token count descending (bigger diffs = more
+     * context).
+     * Agents should override this with domain-specific scoring.
+     *
+     * @param files    all files from the PR (unfiltered)
+     * @param maxFiles maximum number of files to include in the prompt
+     * @return ranked, capped list of files most relevant to this agent
+     */
+    default List<CodeFile> rankFiles(List<CodeFile> files, int maxFiles) {
+        return files.stream()
+                .sorted(Comparator.comparingInt(CodeFile::estimateTokens).reversed())
+                .limit(maxFiles)
+                .toList();
+    }
 }
