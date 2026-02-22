@@ -2,7 +2,7 @@
 
 **Event-Driven Multi-Agent Code Review & Refactoring Platform**
 
-A GitHub App that orchestrates specialized AI agents to perform deep code analysis, detect Spring Boot migration issues, and post actionable review comments on pull requests. Built with Spring Boot 4.0, Spring AI 2.0, and AWS — running for under $5/month.
+A GitHub App that orchestrates specialized AI agents to perform deep code analysis, detect Spring Boot migration issues, and post actionable review comments on pull requests. Built with Spring Boot 4.0, Spring AI 2.0, and AWS — running for under $5/monthz. 
 
 ## Architecture
 
