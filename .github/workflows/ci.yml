@@ -39,13 +39,13 @@ jobs:
           cache: 'maven'
 
       - name: Build and Unit Tests
-        run: ./mvnw verify -DskipITs -B -q
+        run: mvn verify -DskipITs -B -q
         # -DskipITs: Skip integration tests (run separately)
         # -B: Batch mode (no progress bar)
         # -q: Quiet (less log noise)
 
       - name: Integration Tests (Testcontainers)
-        run: ./mvnw failsafe:integration-test failsafe:verify -B
+        run: mvn failsafe:integration-test failsafe:verify -B
 
       - name: Upload Test Results
         if: always()  # Upload even on failure
@@ -70,7 +70,7 @@ jobs:
           cache: 'maven'
 
       - name: Build JAR
-        run: ./mvnw package -DskipTests -B -q
+        run: mvn package -DskipTests -B -q
 
       - name: Build Docker Image
         run: |
