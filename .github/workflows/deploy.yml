@@ -1,0 +1,52 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+          cache: 'maven'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests -B -q
+
+      - name: Copy JAR to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "target/synthetiq-0.1.0-SNAPSHOT.jar"
+          target: "/home/ec2-user/app"
+          strip_components: 1
+
+      - name: Restart App on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            sudo pkill -f 'synthetiq.*\.jar' || true
+            sleep 2
+            cd /home/ec2-user/app
+            nohup java -jar synthetiq-0.1.0-SNAPSHOT.jar \
+              --spring.profiles.active=aws \
+              > /home/ec2-user/app/app.log 2>&1 &
+            sleep 15
+            curl -sf http://localhost:8080/actuator/health || (echo "Health check failed" && cat /home/ec2-user/app/app.log | tail -30 && exit 1)

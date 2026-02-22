@@ -12,7 +12,6 @@ spring:
     name: synthetiq
   profiles:
     active: local
-
   # ── JPA ──────────────────────────────────────────────────
   jpa:
     open-in-view: false  # TRADEOFF: disabled to prevent lazy-loading surprises in controllers
@@ -58,7 +57,7 @@ spring.ai:
 # ── SynthetiQ Custom Properties ────────────────────────────
 synthetiq:
   github:
-    app-id: ${GITHUB_APP_ID:}
+    app-id: ${GITHUB_APP_ID:0}
     webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
     private-key-path: ${GITHUB_PRIVATE_KEY_PATH:}
 

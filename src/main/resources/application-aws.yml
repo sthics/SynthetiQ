@@ -1,30 +1,53 @@
 spring:
+  config:
+    import: "aws-parameterstore:/config/synthetiq/"
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.bedrock.cohere.autoconfigure.BedrockCohereEmbeddingAutoConfiguration
+      - org.springframework.ai.model.bedrock.titan.autoconfigure.BedrockTitanEmbeddingAutoConfiguration
   datasource:
-    url: jdbc:postgresql://${DB_HOST}:5432/synthetiq
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url: jdbc:postgresql://${db.host}:5432/synthetiq
+    username: ${db.username}
+    password: ${db.password}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        boot:
+          allow_jdbc_metadata_access: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
   ai:
     bedrock:
+      converse:
+        chat:
+          enabled: true
+          options:
+            model: amazon.nova-micro-v1:0   # default; overridden per-tier at runtime
+            temperature: 0.1
       aws:
         region: us-east-1
-      chat:
-        enabled: true
     ollama:
       enabled: false
-  config:
-    import: "aws-parameterstore:/synthetiq/"
+
 spring.cloud.aws:
   region:
     static: us-east-1
-  parameterstore:
-    enabled: true
+
 synthetiq:
   ai:
     default-tier: CHEAP
     max-tier: SMART
+  sqs:
+    review-queue: https://sqs.us-east-1.amazonaws.com/585853725115/synthetiq-review-tasks
+
 logging:
   level:
     dev.synthetiq: INFO
