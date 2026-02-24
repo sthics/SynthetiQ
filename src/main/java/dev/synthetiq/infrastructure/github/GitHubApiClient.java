@@ -64,7 +64,7 @@ public class GitHubApiClient {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .bodyValue(Map.of("body", body, "event", event))
                 .retrieve().toBodilessEntity().block();
-        log.info("Posted PR review on {}/pull/{}", repo, pr);
+        log.info("Posted review comment on {}/pull/{}", repo, pr);
     }
 
     @SuppressWarnings("unused")

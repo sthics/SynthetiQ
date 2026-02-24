@@ -56,7 +56,7 @@ public class ReviewTaskListener {
         this.orchestrator = orchestrator;
     }
 
-    @SqsListener(value = "${synthetiq.sqs.review-queue}", maxConcurrentMessages = "5", maxMessagesPerPoll = "5")
+    @SqsListener(value = "${synthetiq.sqs.review-queue}", maxConcurrentMessages = "3", maxMessagesPerPoll = "3")
     public void onReviewTask(String message) {
         UUID reviewId;
         try {
