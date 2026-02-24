@@ -57,9 +57,9 @@ spring.ai:
 # ── SynthetiQ Custom Properties ────────────────────────────
 synthetiq:
   github:
-    app-id: ${GITHUB_APP_ID:0}
-    webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
-    private-key-path: ${GITHUB_PRIVATE_KEY_PATH:}
+    app-id: ${github.app-id:${GITHUB_APP_ID:0}}
+    webhook-secret: ${github.webhook-secret:${GITHUB_WEBHOOK_SECRET:}}
+    private-key: ${github.private-key:${GITHUB_PRIVATE_KEY:}}
 
   agents:
     # Budget guardrails: max Bedrock tokens per day (prevents cost blowouts)
@@ -110,7 +110,7 @@ resilience4j:
       bedrock-daily:
         limit-for-period: 100          # max 100 Bedrock calls per refresh period
         limit-refresh-period: 1d
-        timeout-duration: 0s           # fail immediately if limit reached
+        timeout-duration: 30s          # wait up to 30s before failing
       github-api:
         limit-for-period: 5000        # GitHub App: 5000 req/hr
         limit-refresh-period: 1h

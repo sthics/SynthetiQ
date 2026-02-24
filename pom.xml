@@ -183,6 +183,11 @@
          jackson-datatype-jsr310 removed: In Jackson 3 (Boot 4 default),
          java.time support is built directly into jackson-databind.
         -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>10.0.2</version>
+        </dependency>
 
         <!-- ═══ TESTING ═══════════════════════════════════════════ -->
         <dependency>
