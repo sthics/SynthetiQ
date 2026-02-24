@@ -64,7 +64,7 @@ public class AgentResult {
         r.id = UUID.randomUUID();
         r.agentType = type;
         r.aiTierUsed = tier;
-        r.findings = findings;
+        r.findings = stripMarkdownFences(findings);
         r.summary = summary;
         r.inputTokens = inTokens;
         r.outputTokens = outTokens;
@@ -132,5 +132,20 @@ public class AgentResult {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    private static String stripMarkdownFences(String text) {
+        if (text == null) return "{}";
+        String stripped = text.strip();
+        if (stripped.startsWith("```")) {
+            int firstNewline = stripped.indexOf('\n');
+            if (firstNewline != -1) {
+                stripped = stripped.substring(firstNewline + 1);
+            }
+            if (stripped.endsWith("```")) {
+                stripped = stripped.substring(0, stripped.length() - 3).strip();
+            }
+        }
+        return stripped;
     }
 }
