@@ -7,8 +7,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
+
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -24,7 +28,11 @@ public class GitHubApiClient {
 
     public GitHubApiClient(WebClient.Builder builder, GitHubTokenProvider tokenProvider) {
         this.tokenProvider = tokenProvider;
+        HttpClient httpClient = HttpClient.create()
+                .responseTimeout(Duration.ofSeconds(30))
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000);
         this.webClient = builder.baseUrl("https://api.github.com")
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader(HttpHeaders.ACCEPT, "application/vnd.github.v3+json").build();
     }
 
@@ -33,7 +41,7 @@ public class GitHubApiClient {
     public List<CodeFile> getPullRequestFiles(String repo, int pr, long installationId) {
         String token = tokenProvider.getInstallationToken(installationId);
         List<Map<String, Object>> files = webClient.get()
-                .uri("/repos/{repo}/pulls/{pr}/files", repo, pr)
+                .uri("/repos/" + repo + "/pulls/" + pr + "/files")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
@@ -52,7 +60,7 @@ public class GitHubApiClient {
     @CircuitBreaker(name = "github-api") @RateLimiter(name = "github-api")
     public void createReview(String repo, int pr, long installationId, String body, String event) {
         String token = tokenProvider.getInstallationToken(installationId);
-        webClient.post().uri("/repos/{repo}/pulls/{pr}/reviews", repo, pr)
+        webClient.post().uri("/repos/" + repo + "/pulls/" + pr + "/reviews")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .bodyValue(Map.of("body", body, "event", event))
                 .retrieve().toBodilessEntity().block();
