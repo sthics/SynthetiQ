@@ -16,6 +16,7 @@ import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -78,6 +79,7 @@ public class ReviewOrchestrator {
     private final ReviewRequestRepository reviewRepository;
     private final ExecutorService agentExecutor;
     private final Timer orchestrationTimer;
+    private final ReviewOrchestrator self;
 
     public ReviewOrchestrator(List<CodeReviewAgent> agents,
                               AgentProperties agentProperties,
@@ -86,7 +88,9 @@ public class ReviewOrchestrator {
                               ReviewRequestRepository reviewRepository,
                               @Qualifier("agentExecutorService") ExecutorService agentExecutor,
                               MeterRegistry meterRegistry,
-                              @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds) {
+                              @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds,
+                              @Lazy ReviewOrchestrator self) {
+        this.self = self;
         this.agentTimeout = Duration.ofSeconds(agentTimeoutSeconds);
         this.agents = agents;
         this.agentMap = agents.stream()
@@ -113,7 +117,7 @@ public class ReviewOrchestrator {
 
         try {
             // Transaction 1: Load entity, mark IN_PROGRESS, return snapshot
-            ReviewSnapshot snapshot = beginReview(reviewId);
+            ReviewSnapshot snapshot = self.beginReview(reviewId);
 
             // Step 1: Fetch changed files from GitHub (no transaction needed)
             List<CodeFile> files = gitHubClient.getPullRequestFiles(
@@ -124,7 +128,7 @@ public class ReviewOrchestrator {
 
             if (files.isEmpty()) {
                 log.info("No files to analyze for review {}", reviewId);
-                completeReview(reviewId, List.of());
+                self.completeReview(reviewId, List.of());
                 return;
             }
 
@@ -155,7 +159,7 @@ public class ReviewOrchestrator {
                     .toList();
 
             // Transaction 2: Persist results, post comment, mark complete
-            completeReview(reviewId, results);
+            self.completeReview(reviewId, results);
 
             long successCount = results.stream().filter(AgentResult::isSuccess).count();
             log.info("Review {} completed: {}/{} agents succeeded",
@@ -163,7 +167,7 @@ public class ReviewOrchestrator {
 
         } catch (Exception e) {
             log.error("Review {} failed: {}", reviewId, e.getMessage(), e);
-            handleFailure(reviewId, e);
+            self.handleFailure(reviewId, e);
             throw e;  // Let SQS retry via visibility timeout
         } finally {
             timerSample.stop(orchestrationTimer);
