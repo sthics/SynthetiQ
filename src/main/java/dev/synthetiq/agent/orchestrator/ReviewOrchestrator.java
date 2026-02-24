@@ -19,6 +19,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.beans.factory.annotation.Value;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -66,8 +68,8 @@ import java.util.stream.Collectors;
 public class ReviewOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(ReviewOrchestrator.class);
-    private static final Duration AGENT_TIMEOUT = Duration.ofSeconds(60);
 
+    private final Duration agentTimeout;
     private final List<CodeReviewAgent> agents;
     private final Map<AgentType, CodeReviewAgent> agentMap;
     private final AgentProperties agentProperties;
@@ -83,7 +85,9 @@ public class ReviewOrchestrator {
                               GitHubApiClient gitHubClient,
                               ReviewRequestRepository reviewRepository,
                               @Qualifier("agentExecutorService") ExecutorService agentExecutor,
-                              MeterRegistry meterRegistry) {
+                              MeterRegistry meterRegistry,
+                              @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds) {
+        this.agentTimeout = Duration.ofSeconds(agentTimeoutSeconds);
         this.agents = agents;
         this.agentMap = agents.stream()
                 .collect(Collectors.toMap(CodeReviewAgent::getType, Function.identity()));
@@ -140,7 +144,7 @@ public class ReviewOrchestrator {
             List<CompletableFuture<AgentResult>> futures = eligibleAgents.stream()
                     .map(agent -> CompletableFuture.supplyAsync(
                             () -> runAgent(agent, files, snapshot), agentExecutor)
-                            .orTimeout(AGENT_TIMEOUT.toSeconds(), TimeUnit.SECONDS)
+                            .orTimeout(agentTimeout.toSeconds(), TimeUnit.SECONDS)
                             .exceptionally(ex -> AgentResult.failure(agent.getType(),
                                     "Agent timed out or failed: " + ex.getMessage())))
                     .toList();
@@ -279,7 +283,7 @@ public class ReviewOrchestrator {
      */
     private String buildReviewComment(List<AgentResult> results, ReviewRequest review) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## SynthetiQ Code Review\n\n");
+        sb.append("## \uD83D\uDD0D SynthetiQ Code Review\n\n");
         sb.append("**Repository**: %s | **PR**: #%d | **Commit**: `%s`\n\n"
                 .formatted(review.getRepositoryFullName(),
                         review.getPullRequestNumber(),
