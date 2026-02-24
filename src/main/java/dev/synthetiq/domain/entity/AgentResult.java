@@ -3,6 +3,8 @@ package dev.synthetiq.domain.entity;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.AiTier;
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -34,7 +36,8 @@ public class AgentResult {
     @Column(name = "ai_tier_used", nullable = false, length = 10)
     private AiTier aiTierUsed;
 
-    @Column(name = "findings", columnDefinition = "text", nullable = false)
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "findings", columnDefinition = "jsonb", nullable = false)
     private String findings;
 
     @Column(name = "summary", length = 4000)
