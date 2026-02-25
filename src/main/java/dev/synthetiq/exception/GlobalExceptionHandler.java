@@ -1,5 +1,7 @@
 package dev.synthetiq.exception;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -45,6 +47,28 @@ public class GlobalExceptionHandler {
                 HttpStatus.CONFLICT, ex.getMessage());
         problem.setType(URI.create("https://synthetiq.dev/errors/state-conflict"));
         problem.setTitle("State Conflict");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(RequestNotPermitted.class)
+    public ProblemDetail handleRateLimited(RequestNotPermitted ex) {
+        log.warn("Rate limited: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS, "Too many requests. Please retry later.");
+        problem.setType(URI.create("https://synthetiq.dev/errors/rate-limited"));
+        problem.setTitle("Rate Limited");
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
+    @ExceptionHandler(CallNotPermittedException.class)
+    public ProblemDetail handleCircuitOpen(CallNotPermittedException ex) {
+        log.warn("Circuit breaker open: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE, "Service temporarily unavailable. Please retry later.");
+        problem.setType(URI.create("https://synthetiq.dev/errors/service-unavailable"));
+        problem.setTitle("Service Unavailable");
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }

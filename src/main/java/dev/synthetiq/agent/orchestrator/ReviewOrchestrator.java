@@ -80,6 +80,7 @@ public class ReviewOrchestrator {
     private final GitHubApiClient gitHubClient;
     private final ReviewRequestRepository reviewRepository;
     private final ExecutorService agentExecutor;
+    private final ObjectMapper objectMapper;
     private final Timer orchestrationTimer;
     private final ReviewOrchestrator self;
 
@@ -89,10 +90,12 @@ public class ReviewOrchestrator {
                               GitHubApiClient gitHubClient,
                               ReviewRequestRepository reviewRepository,
                               @Qualifier("agentExecutorService") ExecutorService agentExecutor,
+                              ObjectMapper objectMapper,
                               MeterRegistry meterRegistry,
                               @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds,
                               @Lazy ReviewOrchestrator self) {
         this.self = self;
+        this.objectMapper = objectMapper;
         this.agentTimeout = Duration.ofSeconds(agentTimeoutSeconds);
         this.agents = agents;
         this.agentMap = agents.stream()
@@ -160,8 +163,15 @@ public class ReviewOrchestrator {
                     .map(CompletableFuture::join)
                     .toList();
 
-            // Transaction 2: Persist results, post comment, mark complete
-            self.completeReview(reviewId, results);
+            // Transaction 2: Persist results, mark complete
+            ReviewComment comment = self.completeReview(reviewId, results);
+
+            // Post GitHub comment outside the transaction (avoids holding DB connection during HTTP call)
+            if (comment != null) {
+                gitHubClient.createReview(
+                        comment.repo(), comment.prNumber(), comment.installationId(),
+                        comment.body(), comment.event());
+            }
 
             long successCount = results.stream().filter(AgentResult::isSuccess).count();
             log.info("Review {} completed: {}/{} agents succeeded",
@@ -201,32 +211,34 @@ public class ReviewOrchestrator {
     }
 
     /**
-     * Transaction 2: Load the review fresh, persist agent results, post the
-     * GitHub review comment, and mark COMPLETED.
+     * Transaction 2: Load the review fresh, persist agent results, mark COMPLETED.
+     * Returns the review comment body if there are results to post, null otherwise.
      */
     @Transactional
-    public void completeReview(UUID reviewId, List<AgentResult> results) {
+    public ReviewComment completeReview(UUID reviewId, List<AgentResult> results) {
         ReviewRequest review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Review not found: " + reviewId));
 
         results.forEach(review::addAgentResult);
 
+        ReviewComment comment = null;
         if (!results.isEmpty()) {
-            String reviewBody = buildReviewComment(results, review);
-            String reviewEvent = determineReviewEvent(results);
-
-            gitHubClient.createReview(
+            comment = new ReviewComment(
                     review.getRepositoryFullName(),
                     review.getPullRequestNumber(),
                     review.getInstallationId(),
-                    reviewBody,
-                    reviewEvent
+                    buildReviewComment(results, review),
+                    determineReviewEvent(results)
             );
         }
 
         review.markCompleted();
         reviewRepository.save(review);
+        return comment;
     }
+
+    record ReviewComment(String repo, int prNumber, long installationId,
+                          String body, String event) {}
 
     /**
      * Handles failure within its own transaction scope.
@@ -287,15 +299,14 @@ public class ReviewOrchestrator {
     /**
      * Builds a formatted review comment from all agent results.
      */
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
     private String buildReviewComment(List<AgentResult> results, ReviewRequest review) {
         StringBuilder sb = new StringBuilder();
         sb.append("## \uD83D\uDD0D SynthetiQ Code Review\n\n");
         sb.append("**Repository**: %s | **PR**: #%d | **Commit**: `%s`\n\n"
                 .formatted(review.getRepositoryFullName(),
                         review.getPullRequestNumber(),
-                        review.getHeadSha().substring(0, 7)));
+                        review.getHeadSha() != null && review.getHeadSha().length() >= 7
+                                ? review.getHeadSha().substring(0, 7) : "unknown"));
 
         for (AgentResult result : results) {
             String icon = result.isSuccess() ? ":white_check_mark:" : ":x:";
@@ -366,18 +377,26 @@ public class ReviewOrchestrator {
      * based on the severity of findings.
      */
     private String determineReviewEvent(List<AgentResult> results) {
-        boolean hasCritical = results.stream()
-                .filter(AgentResult::isSuccess)
-                .anyMatch(r -> r.getFindings().contains("\"severity\":\"CRITICAL\"") ||
-                               r.getFindings().contains("\"severity\": \"CRITICAL\""));
+        boolean hasCritical = false;
+        boolean hasHigh = false;
+
+        for (AgentResult result : results) {
+            if (!result.isSuccess()) continue;
+            try {
+                JsonNode root = objectMapper.readTree(result.getFindings());
+                JsonNode findings = root.has("findings") ? root.get("findings") : root;
+                if (!findings.isArray()) continue;
+                for (JsonNode finding : findings) {
+                    String severity = textOrDefault(finding, "severity", "").toUpperCase();
+                    if ("CRITICAL".equals(severity)) hasCritical = true;
+                    if ("HIGH".equals(severity)) hasHigh = true;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to parse findings for severity check: {}", e.getMessage());
+            }
+        }
 
         if (hasCritical) return "REQUEST_CHANGES";
-
-        boolean hasHigh = results.stream()
-                .filter(AgentResult::isSuccess)
-                .anyMatch(r -> r.getFindings().contains("\"severity\":\"HIGH\"") ||
-                               r.getFindings().contains("\"severity\": \"HIGH\""));
-
         return hasHigh ? "COMMENT" : "APPROVE";
     }
 }

@@ -4,6 +4,7 @@ import tools.jackson.databind.ObjectMapper;
 import dev.synthetiq.dto.request.WebhookPayload;
 import dev.synthetiq.infrastructure.github.WebhookSignatureVerifier;
 import dev.synthetiq.service.ReviewService;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -34,6 +35,7 @@ public class WebhookController {
     }
 
     @PostMapping("/github")
+    @RateLimiter(name = "webhook")
     public ResponseEntity<Map<String, Object>> handleWebhook(
             @RequestHeader("X-GitHub-Event") String eventType,
             @RequestHeader("X-GitHub-Delivery") String deliveryId,

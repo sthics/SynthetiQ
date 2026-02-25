@@ -13,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -36,25 +37,41 @@ public class GitHubApiClient {
                 .defaultHeader(HttpHeaders.ACCEPT, "application/vnd.github.v3+json").build();
     }
 
+    private static final int FILES_PER_PAGE = 100;
+    private static final int MAX_PAGES = 10;
+
     @CircuitBreaker(name = "github-api", fallbackMethod = "fallbackGetPrFiles")
     @RateLimiter(name = "github-api")
     public List<CodeFile> getPullRequestFiles(String repo, int pr, long installationId) {
         String token = tokenProvider.getInstallationToken(installationId);
-        List<Map<String, Object>> files = webClient.get()
-                .uri("/repos/" + repo + "/pulls/" + pr + "/files")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .retrieve()
-                .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
-                .block();
-        if (files == null) return List.of();
-        return files.stream().map(f -> new CodeFile(
-                (String) f.get("filename"),
-                CodeFile.detectLanguage((String) f.get("filename")),
-                (String) f.get("patch"),
-                (int) f.getOrDefault("additions", 0),
-                (int) f.getOrDefault("deletions", 0),
-                null
-        )).toList();
+        List<CodeFile> allFiles = new ArrayList<>();
+
+        for (int page = 1; page <= MAX_PAGES; page++) {
+            List<Map<String, Object>> files = webClient.get()
+                    .uri("/repos/" + repo + "/pulls/" + pr + "/files?per_page=" + FILES_PER_PAGE + "&page=" + page)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                    .retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                    .block();
+
+            if (files == null || files.isEmpty()) break;
+
+            files.stream().map(f -> new CodeFile(
+                    (String) f.get("filename"),
+                    CodeFile.detectLanguage((String) f.get("filename")),
+                    (String) f.get("patch"),
+                    (int) f.getOrDefault("additions", 0),
+                    (int) f.getOrDefault("deletions", 0),
+                    null
+            )).forEach(allFiles::add);
+
+            if (files.size() < FILES_PER_PAGE) break;
+        }
+
+        if (allFiles.size() >= FILES_PER_PAGE * MAX_PAGES) {
+            log.warn("PR {}/pull/{} has {}+ files, review may be incomplete", repo, pr, allFiles.size());
+        }
+        return allFiles;
     }
 
     @CircuitBreaker(name = "github-api") @RateLimiter(name = "github-api")
