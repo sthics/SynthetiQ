@@ -12,13 +12,15 @@ spring:
       - org.springframework.ai.model.ollama.autoconfigure.OllamaApiAutoConfiguration
       - org.springframework.ai.model.ollama.autoconfigure.OllamaEmbeddingAutoConfiguration
   datasource:
-    url: jdbc:postgresql://${db.host}:5432/synthetiq?sslmode=require
+    url: jdbc:postgresql://${db.host}:5432/synthetiq?sslmode=require&socketTimeout=30&connectTimeout=10
     username: ${db.username}
     password: ${db.password}
     hikari:
-      maximum-pool-size: 15
-      minimum-idle: 3
+      maximum-pool-size: 20
+      minimum-idle: 5
       connection-timeout: 10000
+      idle-timeout: 300000          # 5 min — release idle connections
+      max-lifetime: 1800000         # 30 min — cycle connections before DB timeout
       leak-detection-threshold: 60000
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
@@ -28,6 +30,8 @@ spring:
       hibernate:
         boot:
           allow_jdbc_metadata_access: false
+        jdbc:
+          batch_size: 25
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -52,9 +56,9 @@ spring.cloud.aws:
     static: us-east-1
   sqs:
     listener:
-      max-concurrent-messages: 3
-      max-messages-per-poll: 3
-      visibility-timeout: 180  # 3 min: covers 120s agent timeout + buffer
+      max-concurrent-messages: 5
+      max-messages-per-poll: 5
+      visibility-timeout: 300  # 5 min: covers 120s agent timeout + retry buffer
 
 synthetiq:
   ai:

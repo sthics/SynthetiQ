@@ -43,12 +43,16 @@ public class GitHubTokenProvider {
     }
 
     public String getInstallationToken(long installationId) {
-        CachedToken cached = cache.get(installationId);
-        if (cached != null && cached.expiresAt().isAfter(Instant.now().plusSeconds(300))) {
-            log.debug("Using cached installation token for installation {}", installationId);
-            return cached.token();
-        }
+        return cache.compute(installationId, (id, existing) -> {
+            if (existing != null && existing.expiresAt().isAfter(Instant.now().plusSeconds(300))) {
+                log.debug("Using cached installation token for installation {}", id);
+                return existing;
+            }
+            return fetchInstallationToken(id);
+        }).token();
+    }
 
+    private CachedToken fetchInstallationToken(long installationId) {
         String jwt = generateJwt();
         log.debug("Generated JWT for app {}, exchanging for installation token", properties.appId());
 
@@ -66,15 +70,16 @@ public class GitHubTokenProvider {
         }
 
         String token = (String) response.get("token");
-        String expiresAtStr = (String) response.get("expires_at");
-        Instant expiresAt = Instant.parse(expiresAtStr);
-
-        cache.put(installationId, new CachedToken(token, expiresAt));
+        Instant expiresAt = Instant.parse((String) response.get("expires_at"));
         log.info("Obtained installation token for installation {} (expires {})", installationId, expiresAt);
-        return token;
+        return new CachedToken(token, expiresAt);
     }
 
     private String generateJwt() {
+        if (privateKey == null) {
+            throw new IllegalStateException(
+                    "GitHub App private key not configured — set synthetiq.github.private-key");
+        }
         try {
             Instant now = Instant.now();
             JWTClaimsSet claims = new JWTClaimsSet.Builder()

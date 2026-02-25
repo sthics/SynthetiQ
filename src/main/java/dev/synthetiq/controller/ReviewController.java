@@ -17,10 +17,13 @@ public class ReviewController {
         return queryService.findById(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
     }
 
+    private static final int MAX_PAGE_SIZE = 50;
+
     @GetMapping
     public ResponseEntity<?> getReviewsByRepo(@RequestParam String repository,
                                                 @RequestParam(defaultValue = "0") int page,
                                                 @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(queryService.findByRepository(repository, page, size));
+        int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        return ResponseEntity.ok(queryService.findByRepository(repository, page, cappedSize));
     }
 }

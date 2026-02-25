@@ -101,7 +101,7 @@ resilience4j:
         sliding-window-size: 10
         failure-rate-threshold: 50
         wait-duration-in-open-state: 60s
-      github:
+      github-api:
         sliding-window-size: 20
         failure-rate-threshold: 30
         wait-duration-in-open-state: 120s  # GitHub rate limits are aggressive
@@ -114,6 +114,10 @@ resilience4j:
       github-api:
         limit-for-period: 5000        # GitHub App: 5000 req/hr
         limit-refresh-period: 1h
+      webhook:
+        limit-for-period: 60          # max 60 webhooks per minute
+        limit-refresh-period: 1m
+        timeout-duration: 0s          # reject immediately if over limit
 
 # ── Actuator ───────────────────────────────────────────────
 management:
