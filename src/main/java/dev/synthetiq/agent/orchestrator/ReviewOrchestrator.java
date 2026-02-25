@@ -21,6 +21,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.beans.factory.annotation.Value;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -285,6 +287,8 @@ public class ReviewOrchestrator {
     /**
      * Builds a formatted review comment from all agent results.
      */
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     private String buildReviewComment(List<AgentResult> results, ReviewRequest review) {
         StringBuilder sb = new StringBuilder();
         sb.append("## \uD83D\uDD0D SynthetiQ Code Review\n\n");
@@ -294,22 +298,67 @@ public class ReviewOrchestrator {
                         review.getHeadSha().substring(0, 7)));
 
         for (AgentResult result : results) {
-            String icon = result.isSuccess() ? "white_check_mark" : "x";
-            sb.append("### %s %s Agent\n".formatted(icon, result.getAgentType()));
+            String icon = result.isSuccess() ? ":white_check_mark:" : ":x:";
+            sb.append("### %s %s Agent\n\n".formatted(icon, result.getAgentType()));
 
             if (result.isSuccess()) {
-                sb.append(result.getSummary() != null ? result.getSummary() : "Analysis complete.");
+                renderFindings(sb, result);
             } else {
-                sb.append("*Analysis failed: %s*".formatted(result.getErrorMessage()));
+                sb.append("> :warning: *Analysis failed: %s*\n\n".formatted(result.getErrorMessage()));
             }
-            sb.append("\n\n");
         }
 
         sb.append("---\n");
-        sb.append("*Powered by [SynthetiQ](https://github.com/your-username/synthetiq) — ");
+        sb.append("*Powered by [SynthetiQ](https://github.com/sthics/SynthetiQ) — ");
         sb.append("Multi-Agent Code Review Platform*");
 
         return sb.toString();
+    }
+
+    private void renderFindings(StringBuilder sb, AgentResult result) {
+        try {
+            JsonNode root = objectMapper.readTree(result.getFindings());
+            JsonNode findings = root.has("findings") ? root.get("findings") : root;
+
+            if (findings.isArray() && !findings.isEmpty()) {
+                sb.append("| Severity | File | Finding | Suggestion |\n");
+                sb.append("|----------|------|---------|------------|\n");
+
+                for (JsonNode finding : findings) {
+                    String severity = severityBadge(textOrDefault(finding, "severity", "INFO"));
+                    String file = textOrDefault(finding, "file", "—");
+                    String title = textOrDefault(finding, "title", textOrDefault(finding, "description", "—"));
+                    String suggestion = textOrDefault(finding, "suggestion", "—");
+                    sb.append("| %s | `%s` | %s | %s |\n".formatted(severity, file, title, suggestion));
+                }
+                sb.append("\n");
+            }
+
+            // Append summary if present
+            String summary = root.has("summary") ? root.get("summary").asText() : result.getSummary();
+            if (summary != null && !summary.isBlank()) {
+                sb.append("> **Summary**: %s\n\n".formatted(summary));
+            }
+        } catch (Exception e) {
+            // Fallback: just show the summary if JSON parsing fails
+            log.warn("Failed to parse findings JSON for {} agent: {}", result.getAgentType(), e.getMessage());
+            sb.append(result.getSummary() != null ? result.getSummary() : "Analysis complete.");
+            sb.append("\n\n");
+        }
+    }
+
+    private static String textOrDefault(JsonNode node, String field, String fallback) {
+        return node.has(field) && !node.get(field).isNull() ? node.get(field).asText() : fallback;
+    }
+
+    private static String severityBadge(String severity) {
+        return switch (severity.toUpperCase()) {
+            case "CRITICAL" -> ":red_circle: CRITICAL";
+            case "HIGH" -> ":orange_circle: HIGH";
+            case "MEDIUM" -> ":yellow_circle: MEDIUM";
+            case "LOW" -> ":white_circle: LOW";
+            default -> ":blue_circle: INFO";
+        };
     }
 
     /**
