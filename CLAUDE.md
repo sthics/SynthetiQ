@@ -45,7 +45,7 @@ src/main/java/dev/synthetiq/
 │   ├── entity/               # JPA: ReviewRequest (aggregate root), AgentResult
 │   ├── enums/                # ReviewStatus, AgentType, AiTier, Severity
 │   ├── event/                # ReviewRequestedEvent (domain event → SQS)
-│   └── valueobject/          # CodeFile (immutable)
+│   └── valueobject/          # CodeFile, ProjectGuide (immutable)
 ├── dto/                      # Request/response records (WebhookPayload, ReviewResponse)
 ├── exception/                # GlobalExceptionHandler (RFC 7807 Problem Details)
 ├── infrastructure/           # External adapters
@@ -92,7 +92,8 @@ ReviewOrchestrator uses **split transactions** — NOT a single `@Transactional`
 - **Jackson 3** — imports are `tools.jackson.databind.ObjectMapper`, not `com.fasterxml.jackson`
 - **Config properties** — type-safe records via `@ConfigurationProperties` + `@ConfigurationPropertiesScan`
 - **CQRS-lite** — `ReviewService` (commands) vs `ReviewQueryService` (read-only transactions)
-- **Agents** — implement `CodeReviewAgent` interface, discovered via `List<CodeReviewAgent>` DI injection
+- **Agents** — implement `CodeReviewAgent` interface, discovered via `List<CodeReviewAgent>` DI injection. `analyze()` receives `Optional<ProjectGuide>` for repo-aware prompts.
+- **Project Guide** — agents read `SYNTHETIQ.md` from the repo root via `GitHubApiClient.getProjectGuide()`. Content is injected into prompts via `PromptUtils.withGuide()`. Soft-capped at 8KB.
 - **Error handling** — `GlobalExceptionHandler` returns RFC 7807 Problem Details
 - **Profiles** — `local` (H2, Ollama, no AWS), `aws` (PostgreSQL, Bedrock, real SQS)
 - **No context path** — controllers map directly: `/webhooks/github`, `/reviews/{id}`
@@ -119,3 +120,4 @@ ReviewOrchestrator uses **split transactions** — NOT a single `@Transactional`
 2. **No `/api/` prefix**: There is no `server.servlet.context-path`. SecurityConfig matchers and test URLs must use bare paths like `/webhooks/github`.
 3. **Don't pass entities to async threads**: Use `ReviewSnapshot` (or similar immutable records) when crossing transaction/thread boundaries.
 4. **Local profile excludes AWS auto-config**: If adding new AWS services, add their auto-config to the exclusion list in `application-local.yml`.
+5. **Project Guide is supplementary**: `getProjectGuide()` must never fail the review pipeline. It catches all exceptions and returns `Optional.empty()` on error.

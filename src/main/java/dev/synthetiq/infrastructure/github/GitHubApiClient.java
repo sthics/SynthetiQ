@@ -1,6 +1,7 @@
 package dev.synthetiq.infrastructure.github;
 
 import dev.synthetiq.domain.valueobject.CodeFile;
+import dev.synthetiq.domain.valueobject.ProjectGuide;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * GitHub REST API client with circuit breaker and rate limiting.
@@ -82,6 +84,28 @@ public class GitHubApiClient {
                 .bodyValue(Map.of("body", body, "event", event))
                 .retrieve().toBodilessEntity().block();
         log.info("Review posted on {}/pull/{}", repo, pr);
+    }
+
+    /**
+     * Fetches the SYNTHETIQ.md project guide from the repo root.
+     * Returns Optional.empty() if the file does not exist or on any error.
+     * Never fails the review pipeline — guide is supplementary context.
+     */
+    public Optional<ProjectGuide> getProjectGuide(String repo, long installationId) {
+        try {
+            String token = tokenProvider.getInstallationToken(installationId);
+            String raw = webClient.get()
+                    .uri("/repos/" + repo + "/contents/SYNTHETIQ.md")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                    .header(HttpHeaders.ACCEPT, "application/vnd.github.raw+json")
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            return ProjectGuide.of(raw);
+        } catch (Exception e) {
+            log.warn("Could not fetch SYNTHETIQ.md from {}: {}", repo, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     @SuppressWarnings("unused")

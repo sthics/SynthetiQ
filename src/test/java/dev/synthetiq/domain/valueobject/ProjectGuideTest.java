@@ -47,6 +47,17 @@ class ProjectGuideTest {
     }
 
     @Test
+    @DisplayName("of() hard-cuts at 8KB when no newlines exist in oversized content")
+    void hardCutsWithoutNewlines() {
+        String noNewlines = "x".repeat(10000);
+        Optional<ProjectGuide> guide = ProjectGuide.of(noNewlines);
+
+        assertThat(guide).isPresent();
+        assertThat(guide.get().truncated()).isTrue();
+        assertThat(guide.get().content().length()).isEqualTo(8192);
+    }
+
+    @Test
     @DisplayName("of() handles content exactly at 8KB limit")
     void exactlyAtLimit() {
         String exact = "a".repeat(8192);

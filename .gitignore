@@ -30,3 +30,6 @@ application-local-override.yml
 
 # Docker
 docker-compose.override.yml
+
+# Docs (plans, design docs — local only)
+docs/

@@ -3,8 +3,10 @@ package dev.synthetiq.agent;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.AiTier;
 import dev.synthetiq.domain.valueobject.CodeFile;
+import dev.synthetiq.domain.valueobject.ProjectGuide;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Strategy pattern contract for specialized analysis agents.
@@ -18,7 +20,8 @@ public interface CodeReviewAgent {
 
     boolean supports(List<CodeFile> files);
 
-    AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName);
+    AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName,
+                            Optional<ProjectGuide> guide);
 
     /**
      * Ranks files by domain-specific relevance and caps at maxFiles.

@@ -9,6 +9,7 @@ import dev.synthetiq.domain.entity.ReviewRequest;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.ReviewStatus;
 import dev.synthetiq.domain.valueobject.CodeFile;
+import dev.synthetiq.domain.valueobject.ProjectGuide;
 import dev.synthetiq.infrastructure.github.GitHubApiClient;
 import dev.synthetiq.repository.ReviewRequestRepository;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -27,6 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -131,9 +133,15 @@ public class ReviewOrchestrator {
                     snapshot.installationId()
             );
 
+            // Fetch project guide (supplementary — never fails the review)
+            Optional<ProjectGuide> guide = gitHubClient.getProjectGuide(
+                    snapshot.repoFullName(), snapshot.installationId());
+            guide.ifPresent(g -> log.info("Loaded SYNTHETIQ.md for {} ({}B, truncated={})",
+                    snapshot.repoFullName(), g.content().length(), g.truncated()));
+
             if (files.isEmpty()) {
                 log.info("No files to analyze for review {}", reviewId);
-                self.completeReview(reviewId, List.of());
+                self.completeReview(reviewId, List.of(), Optional.empty());
                 return;
             }
 
@@ -152,7 +160,7 @@ public class ReviewOrchestrator {
             // Step 3: Fan out to agents in parallel (using injected executor with MDC propagation)
             List<CompletableFuture<AgentResult>> futures = eligibleAgents.stream()
                     .map(agent -> CompletableFuture.supplyAsync(
-                            () -> runAgent(agent, files, snapshot), agentExecutor)
+                            () -> runAgent(agent, files, snapshot, guide), agentExecutor)
                             .orTimeout(agentTimeout.toSeconds(), TimeUnit.SECONDS)
                             .exceptionally(ex -> AgentResult.failure(agent.getType(),
                                     "Agent timed out or failed: " + ex.getMessage())))
@@ -164,7 +172,7 @@ public class ReviewOrchestrator {
                     .toList();
 
             // Transaction 2: Persist results, mark complete
-            ReviewComment comment = self.completeReview(reviewId, results);
+            ReviewComment comment = self.completeReview(reviewId, results, guide);
 
             // Post GitHub comment outside the transaction (avoids holding DB connection during HTTP call)
             if (comment != null) {
@@ -215,7 +223,8 @@ public class ReviewOrchestrator {
      * Returns the review comment body if there are results to post, null otherwise.
      */
     @Transactional
-    public ReviewComment completeReview(UUID reviewId, List<AgentResult> results) {
+    public ReviewComment completeReview(UUID reviewId, List<AgentResult> results,
+                                         Optional<ProjectGuide> guide) {
         ReviewRequest review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Review not found: " + reviewId));
 
@@ -227,7 +236,7 @@ public class ReviewOrchestrator {
                     review.getRepositoryFullName(),
                     review.getPullRequestNumber(),
                     review.getInstallationId(),
-                    buildReviewComment(results, review),
+                    buildReviewComment(results, review, guide),
                     determineReviewEvent(results)
             );
         }
@@ -265,11 +274,11 @@ public class ReviewOrchestrator {
                           String headSha, long installationId) {}
 
     private AgentResult runAgent(CodeReviewAgent agent, List<CodeFile> files,
-                                  ReviewSnapshot snapshot) {
+                                  ReviewSnapshot snapshot, Optional<ProjectGuide> guide) {
         log.debug("Running {} agent for review {}", agent.getType(), snapshot.reviewId());
         try {
             AgentAnalysisResult analysis = agent.analyze(
-                    files, snapshot.headSha(), snapshot.repoFullName());
+                    files, snapshot.headSha(), snapshot.repoFullName(), guide);
 
             return AgentResult.success(
                     agent.getType(),
@@ -299,7 +308,8 @@ public class ReviewOrchestrator {
     /**
      * Builds a formatted review comment from all agent results.
      */
-    private String buildReviewComment(List<AgentResult> results, ReviewRequest review) {
+    private String buildReviewComment(List<AgentResult> results, ReviewRequest review,
+                                       Optional<ProjectGuide> guide) {
         StringBuilder sb = new StringBuilder();
         sb.append("## \uD83D\uDD0D SynthetiQ Code Review\n\n");
         sb.append("**Repository**: %s | **PR**: #%d | **Commit**: `%s`\n\n"
@@ -317,6 +327,13 @@ public class ReviewOrchestrator {
             } else {
                 sb.append("> :warning: *Analysis failed: %s*\n\n".formatted(result.getErrorMessage()));
             }
+        }
+
+        // Guide-related footer
+        if (guide.isEmpty()) {
+            sb.append("\n> :bulb: **Tip:** Add a `SYNTHETIQ.md` to your repo root to get project-aware reviews.\n\n");
+        } else if (guide.get().truncated()) {
+            sb.append("\n> :warning: Your `SYNTHETIQ.md` exceeds 8KB and was truncated. Consider keeping it concise for best results.\n\n");
         }
 
         sb.append("---\n");

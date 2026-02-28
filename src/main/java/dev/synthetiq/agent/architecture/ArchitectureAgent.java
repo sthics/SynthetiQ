@@ -2,10 +2,12 @@ package dev.synthetiq.agent.architecture;
 
 import dev.synthetiq.agent.AgentAnalysisResult;
 import dev.synthetiq.agent.CodeReviewAgent;
+import dev.synthetiq.agent.PromptUtils;
 import dev.synthetiq.config.AgentProperties;
 import dev.synthetiq.domain.enums.AgentType;
 import dev.synthetiq.domain.enums.AiTier;
 import dev.synthetiq.domain.valueobject.CodeFile;
+import dev.synthetiq.domain.valueobject.ProjectGuide;
 import dev.synthetiq.infrastructure.ai.AiModelRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -102,7 +105,8 @@ public class ArchitectureAgent implements CodeReviewAgent {
     }
 
     @Override
-    public AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName) {
+    public AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName,
+                                       Optional<ProjectGuide> guide) {
         log.info("ArchitectureAgent analyzing {} files for {}", files.size(), repoFullName);
         List<CodeFile> ranked = rankFiles(files, maxContextFiles);
         if (ranked.isEmpty())
@@ -110,7 +114,7 @@ public class ArchitectureAgent implements CodeReviewAgent {
 
         log.info("ArchitectureAgent selected top {} of {} files for context", ranked.size(), files.size());
 
-        String prompt = buildPrompt(ranked, repoFullName);
+        String prompt = buildPrompt(ranked, repoFullName, guide);
         Instant start = Instant.now();
         AiModelRouter.AiResponse response = modelRouter.route(prompt, AiTier.SMART);
 
@@ -119,11 +123,11 @@ public class ArchitectureAgent implements CodeReviewAgent {
                 Duration.between(start, Instant.now()));
     }
 
-    private String buildPrompt(List<CodeFile> files, String repo) {
+    private String buildPrompt(List<CodeFile> files, String repo, Optional<ProjectGuide> guide) {
         String ctx = files.stream()
                 .map(f -> "### %s\n```%s\n%s\n```".formatted(f.path(), f.language(), f.patch()))
                 .collect(Collectors.joining("\n\n"));
-        return """
+        String base = """
                 You are an architecture review agent specializing in Spring Boot. Repository: %s
                 Analyze for:
                 1. Spring Boot 2->3 migration: javax->jakarta, WebSecurityConfigurerAdapter, property renames
@@ -132,8 +136,7 @@ public class ArchitectureAgent implements CodeReviewAgent {
                 4. Architecture: circular deps, God classes, business logic in controllers
                 Respond ONLY with JSON: {"findings":[{"severity":"...","category":"MIGRATION|PATTERN|ARCHITECTURE",
                 "file":"...","line":0,"title":"...","description":"...","suggestion":"...","migration_effort":"LOW|MEDIUM|HIGH"}],
-                "summary":"..."}
-                Code:\n%s"""
-                .formatted(repo, ctx);
+                "summary":"..."}""".formatted(repo);
+        return PromptUtils.withGuide(base, guide, ctx);
     }
 }

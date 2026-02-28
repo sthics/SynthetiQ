@@ -17,10 +17,8 @@ public record ProjectGuide(String content, boolean truncated) {
         if (rawContent.length() <= MAX_BYTES) {
             return Optional.of(new ProjectGuide(rawContent, false));
         }
-        int cut = rawContent.lastIndexOf('\n', MAX_BYTES);
-        if (cut <= 0) {
-            cut = MAX_BYTES;
-        }
-        return Optional.of(new ProjectGuide(rawContent.substring(0, cut + 1), true));
+        int newlinePos = rawContent.lastIndexOf('\n', MAX_BYTES);
+        int endIndex = (newlinePos <= 0) ? MAX_BYTES : newlinePos + 1;
+        return Optional.of(new ProjectGuide(rawContent.substring(0, endIndex), true));
     }
 }
