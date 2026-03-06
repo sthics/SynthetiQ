@@ -75,7 +75,7 @@ jobs:
             --output text
 
       - name: Wait for app startup
-        run: sleep 25
+        run: sleep 35
 
       - name: Health check via SSM
         run: |
@@ -83,7 +83,7 @@ jobs:
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters 'commands=[
-              "curl -sf http://localhost:8080/actuator/health || (echo Health check failed && tail -50 /home/ec2-user/app/app.log && exit 1)"
+              "curl -sf http://localhost:8090/actuator/health/readiness || (echo Health check failed && tail -50 /home/ec2-user/app/app.log && exit 1)"
             ]' \
             --timeout-seconds 30 \
             --output text \
