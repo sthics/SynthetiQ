@@ -104,6 +104,7 @@ ReviewOrchestrator uses **split transactions** — NOT a single `@Transactional`
 - `BaseIntegrationTest` for full stack (Testcontainers: PostgreSQL + LocalStack)
 - Integration tests use `*IT` suffix and run during `mvn verify` (failsafe plugin)
 - WireMock for GitHub API mocking, Awaitility for async assertions
+- **Test PRs** — use the `testing` branch for creating test PRs against `main` (e.g. to validate SynthetiQ review output)
 
 ## Key Config Locations
 
