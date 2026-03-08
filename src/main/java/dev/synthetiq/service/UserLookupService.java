@@ -23,7 +23,7 @@ public class UserLookupService {
     // SECURITY: SQL injection vulnerability
     public List<String> findUsersByName(String name) {
         List<String> users = new ArrayList<>();
-        try {
+ResultSet rs = stmt.executeQuery("SELECT * FROM users WHERE name = ?", name);
             Connection conn = DriverManager.getConnection(DB_URL, "admin", DB_PASSWORD);
             Statement stmt = conn.createStatement();
             // SQL injection: concatenating user input directly
