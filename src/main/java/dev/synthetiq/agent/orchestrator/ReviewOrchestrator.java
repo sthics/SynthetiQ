@@ -7,7 +7,6 @@ import dev.synthetiq.config.AiProperties;
 import dev.synthetiq.domain.entity.AgentResult;
 import dev.synthetiq.domain.entity.ReviewRequest;
 import dev.synthetiq.domain.enums.AgentType;
-import dev.synthetiq.domain.enums.ReviewStatus;
 import dev.synthetiq.domain.valueobject.CodeFile;
 import dev.synthetiq.domain.valueobject.ProjectGuide;
 import dev.synthetiq.infrastructure.github.GitHubApiClient;
@@ -22,8 +21,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import org.springframework.beans.factory.annotation.Value;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -80,24 +77,23 @@ public class ReviewOrchestrator {
     private final AgentProperties agentProperties;
     private final AiProperties aiProperties;
     private final GitHubApiClient gitHubClient;
+    private final ReviewCommentBuilder commentBuilder;
     private final ReviewRequestRepository reviewRepository;
     private final ExecutorService agentExecutor;
-    private final ObjectMapper objectMapper;
     private final Timer orchestrationTimer;
     private final ReviewOrchestrator self;
 
     public ReviewOrchestrator(List<CodeReviewAgent> agents,
-                              AgentProperties agentProperties,
-                              AiProperties aiProperties,
-                              GitHubApiClient gitHubClient,
-                              ReviewRequestRepository reviewRepository,
-                              @Qualifier("agentExecutorService") ExecutorService agentExecutor,
-                              ObjectMapper objectMapper,
-                              MeterRegistry meterRegistry,
-                              @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds,
-                              @Lazy ReviewOrchestrator self) {
+            AgentProperties agentProperties,
+            AiProperties aiProperties,
+            GitHubApiClient gitHubClient,
+            ReviewRequestRepository reviewRepository,
+            ReviewCommentBuilder commentBuilder,
+            @Qualifier("agentExecutorService") ExecutorService agentExecutor,
+            MeterRegistry meterRegistry,
+            @Value("${synthetiq.review.agent-timeout-seconds:120}") long agentTimeoutSeconds,
+            @Lazy ReviewOrchestrator self) {
         this.self = self;
-        this.objectMapper = objectMapper;
         this.agentTimeout = Duration.ofSeconds(agentTimeoutSeconds);
         this.agents = agents;
         this.agentMap = agents.stream()
@@ -105,6 +101,7 @@ public class ReviewOrchestrator {
         this.agentProperties = agentProperties;
         this.aiProperties = aiProperties;
         this.gitHubClient = gitHubClient;
+        this.commentBuilder = commentBuilder;
         this.reviewRepository = reviewRepository;
         this.agentExecutor = agentExecutor;
         this.orchestrationTimer = Timer.builder("synthetiq.orchestration.duration")
@@ -130,8 +127,7 @@ public class ReviewOrchestrator {
             List<CodeFile> files = gitHubClient.getPullRequestFiles(
                     snapshot.repoFullName(),
                     snapshot.prNumber(),
-                    snapshot.installationId()
-            );
+                    snapshot.installationId());
 
             // Fetch project guide (supplementary — never fails the review)
             Optional<ProjectGuide> guide = gitHubClient.getProjectGuide(
@@ -157,7 +153,8 @@ public class ReviewOrchestrator {
             log.info("Eligible agents for review {}: {}", reviewId,
                     eligibleAgents.stream().map(a -> a.getType().name()).toList());
 
-            // Step 3: Fan out to agents in parallel (using injected executor with MDC propagation)
+            // Step 3: Fan out to agents in parallel (using injected executor with MDC
+            // propagation)
             List<CompletableFuture<AgentResult>> futures = eligibleAgents.stream()
                     .map(agent -> CompletableFuture.supplyAsync(
                             () -> runAgent(agent, files, snapshot, guide), agentExecutor)
@@ -174,11 +171,12 @@ public class ReviewOrchestrator {
             // Transaction 2: Persist results, mark complete
             ReviewComment comment = self.completeReview(reviewId, results, guide);
 
-            // Post GitHub comment outside the transaction (avoids holding DB connection during HTTP call)
+            // Post GitHub comment outside the transaction (avoids holding DB connection
+            // during HTTP call)
             if (comment != null) {
                 gitHubClient.createReview(
                         comment.repo(), comment.prNumber(), comment.installationId(),
-                        comment.body(), comment.event());
+                        comment.body(), comment.event(), comment.inlineComments());
             }
 
             long successCount = results.stream().filter(AgentResult::isSuccess).count();
@@ -188,7 +186,7 @@ public class ReviewOrchestrator {
         } catch (Exception e) {
             log.error("Review {} failed: {}", reviewId, e.getMessage(), e);
             self.handleFailure(reviewId, e);
-            throw e;  // Let SQS retry via visibility timeout
+            throw e; // Let SQS retry via visibility timeout
         } finally {
             timerSample.stop(orchestrationTimer);
         }
@@ -214,8 +212,7 @@ public class ReviewOrchestrator {
                 review.getRepositoryFullName(),
                 review.getPullRequestNumber(),
                 review.getHeadSha(),
-                review.getInstallationId()
-        );
+                review.getInstallationId());
     }
 
     /**
@@ -224,7 +221,7 @@ public class ReviewOrchestrator {
      */
     @Transactional
     public ReviewComment completeReview(UUID reviewId, List<AgentResult> results,
-                                         Optional<ProjectGuide> guide) {
+            Optional<ProjectGuide> guide) {
         ReviewRequest review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new IllegalArgumentException("Review not found: " + reviewId));
 
@@ -232,22 +229,27 @@ public class ReviewOrchestrator {
 
         ReviewComment comment = null;
         if (!results.isEmpty()) {
+            var buildResult = commentBuilder.build(results,
+                    review.getRepositoryFullName(),
+                    review.getPullRequestNumber(),
+                    review.getHeadSha(),
+                    guide);
             comment = new ReviewComment(
                     review.getRepositoryFullName(),
                     review.getPullRequestNumber(),
                     review.getInstallationId(),
-                    buildReviewComment(results, review, guide),
-                    determineReviewEvent(results)
-            );
+                    buildResult.body(),
+                    buildResult.event(),
+                    buildResult.inlineComments());
         }
-
         review.markCompleted();
         reviewRepository.save(review);
         return comment;
     }
 
     record ReviewComment(String repo, int prNumber, long installationId,
-                          String body, String event) {}
+            String body, String event, List<InlineComment> inlineComments) {
+    }
 
     /**
      * Handles failure within its own transaction scope.
@@ -271,10 +273,11 @@ public class ReviewOrchestrator {
      * Avoids passing the managed entity to async threads.
      */
     record ReviewSnapshot(UUID reviewId, String repoFullName, int prNumber,
-                          String headSha, long installationId) {}
+            String headSha, long installationId) {
+    }
 
     private AgentResult runAgent(CodeReviewAgent agent, List<CodeFile> files,
-                                  ReviewSnapshot snapshot, Optional<ProjectGuide> guide) {
+            ReviewSnapshot snapshot, Optional<ProjectGuide> guide) {
         log.debug("Running {} agent for review {}", agent.getType(), snapshot.reviewId());
         try {
             AgentAnalysisResult analysis = agent.analyze(
@@ -287,8 +290,7 @@ public class ReviewOrchestrator {
                     analysis.summary(),
                     analysis.inputTokens(),
                     analysis.outputTokens(),
-                    analysis.duration()
-            );
+                    analysis.duration());
         } catch (Exception e) {
             log.warn("{} agent failed for review {}: {}", agent.getType(), snapshot.reviewId(), e.getMessage());
             return AgentResult.failure(agent.getType(), e.getMessage());
@@ -301,119 +303,8 @@ public class ReviewOrchestrator {
             case PERFORMANCE -> agentProperties.performance().enabled();
             case ARCHITECTURE -> agentProperties.architecture().enabled();
             case REFACTORING -> agentProperties.refactoring().enabled();
-            case REPORT -> true;  // Report agent is always enabled
+            case REPORT -> true; // Report agent is always enabled
         };
     }
 
-    /**
-     * Builds a formatted review comment from all agent results.
-     */
-    private String buildReviewComment(List<AgentResult> results, ReviewRequest review,
-                                       Optional<ProjectGuide> guide) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("## \uD83D\uDD0D SynthetiQ Code Review\n\n");
-        sb.append("**Repository**: %s | **PR**: #%d | **Commit**: `%s`\n\n"
-                .formatted(review.getRepositoryFullName(),
-                        review.getPullRequestNumber(),
-                        review.getHeadSha() != null && review.getHeadSha().length() >= 7
-                                ? review.getHeadSha().substring(0, 7) : "unknown"));
-
-        for (AgentResult result : results) {
-            String icon = result.isSuccess() ? ":white_check_mark:" : ":x:";
-            sb.append("### %s %s Agent\n\n".formatted(icon, result.getAgentType()));
-
-            if (result.isSuccess()) {
-                renderFindings(sb, result);
-            } else {
-                sb.append("> :warning: *Analysis failed: %s*\n\n".formatted(result.getErrorMessage()));
-            }
-        }
-
-        // Guide-related footer
-        if (guide.isEmpty()) {
-            sb.append("\n> :bulb: **Tip:** Add a `SYNTHETIQ.md` to your repo root to get project-aware reviews.\n\n");
-        } else if (guide.get().truncated()) {
-            sb.append("\n> :warning: Your `SYNTHETIQ.md` exceeds 8KB and was truncated. Consider keeping it concise for best results.\n\n");
-        }
-
-        sb.append("---\n");
-        sb.append("*Powered by [SynthetiQ](https://github.com/sthics/SynthetiQ) — ");
-        sb.append("Multi-Agent Code Review Platform*");
-
-        return sb.toString();
-    }
-
-    private void renderFindings(StringBuilder sb, AgentResult result) {
-        try {
-            JsonNode root = objectMapper.readTree(result.getFindings());
-            JsonNode findings = root.has("findings") ? root.get("findings") : root;
-
-            if (findings.isArray() && !findings.isEmpty()) {
-                sb.append("| Severity | File | Finding | Suggestion |\n");
-                sb.append("|----------|------|---------|------------|\n");
-
-                for (JsonNode finding : findings) {
-                    String severity = severityBadge(textOrDefault(finding, "severity", "INFO"));
-                    String file = textOrDefault(finding, "file", "—");
-                    String title = textOrDefault(finding, "title", textOrDefault(finding, "description", "—"));
-                    String suggestion = textOrDefault(finding, "suggestion", "—");
-                    sb.append("| %s | `%s` | %s | %s |\n".formatted(severity, file, title, suggestion));
-                }
-                sb.append("\n");
-            }
-
-            // Append summary if present
-            String summary = root.has("summary") ? root.get("summary").asText() : result.getSummary();
-            if (summary != null && !summary.isBlank()) {
-                sb.append("> **Summary**: %s\n\n".formatted(summary));
-            }
-        } catch (Exception e) {
-            // Fallback: just show the summary if JSON parsing fails
-            log.warn("Failed to parse findings JSON for {} agent: {}", result.getAgentType(), e.getMessage());
-            sb.append(result.getSummary() != null ? result.getSummary() : "Analysis complete.");
-            sb.append("\n\n");
-        }
-    }
-
-    private static String textOrDefault(JsonNode node, String field, String fallback) {
-        return node.has(field) && !node.get(field).isNull() ? node.get(field).asText() : fallback;
-    }
-
-    private static String severityBadge(String severity) {
-        return switch (severity.toUpperCase()) {
-            case "CRITICAL" -> ":red_circle: CRITICAL";
-            case "HIGH" -> ":orange_circle: HIGH";
-            case "MEDIUM" -> ":yellow_circle: MEDIUM";
-            case "LOW" -> ":white_circle: LOW";
-            default -> ":blue_circle: INFO";
-        };
-    }
-
-    /**
-     * Determines whether to APPROVE, COMMENT, or REQUEST_CHANGES
-     * based on the severity of findings.
-     */
-    private String determineReviewEvent(List<AgentResult> results) {
-        boolean hasCritical = false;
-        boolean hasHigh = false;
-
-        for (AgentResult result : results) {
-            if (!result.isSuccess()) continue;
-            try {
-                JsonNode root = objectMapper.readTree(result.getFindings());
-                JsonNode findings = root.has("findings") ? root.get("findings") : root;
-                if (!findings.isArray()) continue;
-                for (JsonNode finding : findings) {
-                    String severity = textOrDefault(finding, "severity", "").toUpperCase();
-                    if ("CRITICAL".equals(severity)) hasCritical = true;
-                    if ("HIGH".equals(severity)) hasHigh = true;
-                }
-            } catch (Exception e) {
-                log.warn("Failed to parse findings for severity check: {}", e.getMessage());
-            }
-        }
-
-        if (hasCritical) return "REQUEST_CHANGES";
-        return hasHigh ? "COMMENT" : "APPROVE";
-    }
 }

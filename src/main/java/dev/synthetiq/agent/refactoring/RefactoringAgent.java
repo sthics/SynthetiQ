@@ -114,7 +114,7 @@ public class RefactoringAgent implements CodeReviewAgent {
 
     @Override
     public AgentAnalysisResult analyze(List<CodeFile> files, String headSha, String repoFullName,
-                                       Optional<ProjectGuide> guide) {
+            Optional<ProjectGuide> guide) {
         log.info("RefactoringAgent analyzing {} files for {}", files.size(), repoFullName);
         List<CodeFile> ranked = rankFiles(files, maxContextFiles);
         if (ranked.isEmpty())
@@ -175,10 +175,14 @@ public class RefactoringAgent implements CodeReviewAgent {
                 - Hardcoded strings (URLs, messages) that should be constants or config
                 - Repeated literal values that should be a single constant
 
+                For each finding, set "line" to the exact line number from the patch where the issue occurs (0 if file-level).
+                Set "suggested_code" to the exact replacement code for the affected lines (empty string if the fix is conceptual).
+                Set "suggestion_type" to "replacement" if suggested_code is a drop-in replacement, or "conceptual" if it shows a general approach.
                 Respond ONLY with JSON: {"findings":[{"severity":"CRITICAL|HIGH|MEDIUM|LOW",\
                 "category":"DEAD_CODE|DUPLICATION|COMPLEXITY|NAMING|SOLID|EXTRACT_METHOD|MAGIC_VALUES",\
                 "file":"...","line":0,"title":"...","description":"...",\
-                "suggestion":"...","impact":"HIGH|MEDIUM|LOW",\
+                "suggestion":"...","suggested_code":"...","suggestion_type":"replacement|conceptual",\
+                "impact":"HIGH|MEDIUM|LOW",\
                 "effort":"LOW|MEDIUM|HIGH"}],\
                 "summary":"..."}""".formatted(repo);
         return PromptUtils.withGuide(base, guide, ctx);

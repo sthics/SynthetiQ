@@ -1,5 +1,7 @@
 package dev.synthetiq.infrastructure.github;
 
+import dev.synthetiq.agent.orchestrator.InlineComment;
+
 import dev.synthetiq.domain.valueobject.CodeFile;
 import dev.synthetiq.domain.valueobject.ProjectGuide;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -53,10 +55,12 @@ public class GitHubApiClient {
                     .uri("/repos/" + repo + "/pulls/" + pr + "/files?per_page=" + FILES_PER_PAGE + "&page=" + page)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                     .retrieve()
-                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {})
+                    .bodyToMono(new ParameterizedTypeReference<List<Map<String, Object>>>() {
+                    })
                     .block();
 
-            if (files == null || files.isEmpty()) break;
+            if (files == null || files.isEmpty())
+                break;
 
             files.stream().map(f -> new CodeFile(
                     (String) f.get("filename"),
@@ -64,10 +68,10 @@ public class GitHubApiClient {
                     (String) f.get("patch"),
                     (int) f.getOrDefault("additions", 0),
                     (int) f.getOrDefault("deletions", 0),
-                    null
-            )).forEach(allFiles::add);
+                    null)).forEach(allFiles::add);
 
-            if (files.size() < FILES_PER_PAGE) break;
+            if (files.size() < FILES_PER_PAGE)
+                break;
         }
 
         if (allFiles.size() >= FILES_PER_PAGE * MAX_PAGES) {
@@ -76,14 +80,31 @@ public class GitHubApiClient {
         return allFiles;
     }
 
-    @CircuitBreaker(name = "github-api") @RateLimiter(name = "github-api")
+    @CircuitBreaker(name = "github-api")
+    @RateLimiter(name = "github-api")
     public void createReview(String repo, int pr, long installationId, String body, String event) {
+        createReview(repo, pr, installationId, body, event, List.of());
+    }
+
+    @CircuitBreaker(name = "github-api")
+    @RateLimiter(name = "github-api")
+    public void createReview(String repo, int pr, long installationId, String body,
+            String event, List<InlineComment> inlineComments) {
         String token = tokenProvider.getInstallationToken(installationId);
+
+        Map<String, Object> payload = new java.util.HashMap<>(Map.of("body", body, "event", event));
+        if (inlineComments != null && !inlineComments.isEmpty()) {
+            payload.put("comments", inlineComments.stream()
+                    .map(c -> Map.<String, Object>of("path", c.path(), "line", c.line(), "body", c.body()))
+                    .toList());
+        }
+
         webClient.post().uri("/repos/" + repo + "/pulls/" + pr + "/reviews")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-                .bodyValue(Map.of("body", body, "event", event))
+                .bodyValue(payload)
                 .retrieve().toBodilessEntity().block();
-        log.info("Review posted on {}/pull/{}", repo, pr);
+        log.info("Review posted on {}/pull/{} with {} inline comments", repo, pr,
+                inlineComments != null ? inlineComments.size() : 0);
     }
 
     /**
